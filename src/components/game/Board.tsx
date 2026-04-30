@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils'
 import type { BoardCell, Bonus } from '@/types/game'
 
 import { Tile } from './Tile'
-import type { PendingPlacement } from '@/game/rules'
+import type { CellPos, PendingPlacement } from '@/game/rules'
 
 const bonusStyles: Record<Bonus, { bg: string; label: string }> = {
   TW: { bg: 'bg-rose-500/15 text-rose-600 dark:text-rose-300', label: 'TW' },
@@ -18,6 +18,7 @@ export function Board({
   className,
   onCellClick,
   pending,
+  ruleHighlights,
   draggingTileId,
   hoveredCell,
   onCellDragEnter,
@@ -28,6 +29,7 @@ export function Board({
   className?: string
   onCellClick?: (cell: BoardCell) => void
   pending?: PendingPlacement[]
+  ruleHighlights?: CellPos[]
   draggingTileId?: string | null
   hoveredCell?: { row: number; col: number } | null
   onCellDragEnter?: (cell: BoardCell) => void
@@ -36,6 +38,8 @@ export function Board({
 }) {
   const pendingMap = new Map<string, PendingPlacement>()
   for (const p of pending ?? []) pendingMap.set(`${p.row}-${p.col}`, p)
+
+  const highlightSet = new Set((ruleHighlights ?? []).map((c) => `${c.row}-${c.col}`))
 
   return (
     <div
@@ -50,6 +54,7 @@ export function Board({
       >
         {grid.flat().map((cell) => {
           const pendingTile = pendingMap.get(`${cell.row}-${cell.col}`)?.tile
+          const isRuleHighlighted = highlightSet.has(`${cell.row}-${cell.col}`)
           return (
             <button
               key={`${cell.row}-${cell.col}`}
@@ -80,6 +85,7 @@ export function Board({
                   hoveredCell?.col === cell.col &&
                   draggingTileId &&
                   (cell.tile || pendingTile ? 'ring-2 ring-destructive' : 'ring-2 ring-primary'),
+                isRuleHighlighted && 'ring-2 ring-destructive bg-destructive/10 animate-pulse',
               )}
               aria-label={`Cell ${cell.row + 1}, ${cell.col + 1}`}
             >
