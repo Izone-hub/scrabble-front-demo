@@ -26,7 +26,7 @@ export function TileRack({
         <Tile
           key={t.id}
           tile={t}
-          className="w-9 sm:w-10"
+          className="w-9 sm:w-14"
           draggable
           isDragging={draggingTileId === t.id}
           onDragStart={(e) => {

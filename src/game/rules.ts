@@ -8,6 +8,19 @@ export type PendingPlacement = {
 
 type Dir = 'H' | 'V'
 
+export type CellPos = { row: number; col: number }
+
+export type RuleViolationCode =
+  | 'NO_TILES'
+  | 'OUT_OF_BOUNDS'
+  | 'OCCUPIED'
+  | 'NOT_IN_LINE'
+  | 'TOO_SHORT'
+  | 'NOT_CONTIGUOUS'
+  | 'MUST_COVER_CENTER'
+  | 'MUST_CONNECT'
+  | 'INVALID_WORD'
+
 export type ValidatedMove = {
   ok: true
   words: { word: string; score: number }[]
@@ -16,7 +29,9 @@ export type ValidatedMove = {
 
 export type InvalidMove = {
   ok: false
+  code: RuleViolationCode
   reason: string
+  highlightCells?: CellPos[]
 }
 
 function isInBounds(row: number, col: number) {
@@ -123,22 +138,41 @@ export function validateAndScoreMove(args: {
 }): ValidatedMove | InvalidMove {
   const { committedGrid, pending, dictionary } = args
 
-  if (pending.length === 0) return { ok: false, reason: 'Place at least one tile.' }
+  if (pending.length === 0)
+    return { ok: false, code: 'NO_TILES', reason: 'Place at least one tile.' }
 
   const pendingMap = new Map<string, Tile>()
   for (const p of pending) pendingMap.set(`${p.row},${p.col}`, p.tile)
 
   // Basic occupancy checks.
   for (const p of pending) {
-    if (!isInBounds(p.row, p.col)) return { ok: false, reason: 'Out of bounds placement.' }
+    if (!isInBounds(p.row, p.col)) {
+      return {
+        ok: false,
+        code: 'OUT_OF_BOUNDS',
+        reason: 'Out of bounds placement.',
+        highlightCells: [{ row: p.row, col: p.col }],
+      }
+    }
     if (getCommittedTileAt(committedGrid, p.row, p.col)) {
-      return { ok: false, reason: 'Cannot place on an occupied cell.' }
+      return {
+        ok: false,
+        code: 'OCCUPIED',
+        reason: 'Cannot place on an occupied cell.',
+        highlightCells: [{ row: p.row, col: p.col }],
+      }
     }
   }
 
   const sameRow = pending.every((p) => p.row === pending[0].row)
   const sameCol = pending.every((p) => p.col === pending[0].col)
-  if (!sameRow && !sameCol) return { ok: false, reason: 'Tiles must be in one row or one column.' }
+  if (!sameRow && !sameCol)
+    return {
+      ok: false,
+      code: 'NOT_IN_LINE',
+      reason: 'Tiles must be in one row or one column.',
+      highlightCells: pending.map((p) => ({ row: p.row, col: p.col })),
+    }
   const dir: Dir = sameRow ? 'H' : 'V'
 
   const firstMove = !hasCommittedTiles(committedGrid)
@@ -148,18 +182,35 @@ export function validateAndScoreMove(args: {
   const main = collectWord(committedGrid, pendingMap, anchor.row, anchor.col, dir).tiles
   const mainWord = tilesToWord(main)
 
-  if (main.length < 2) return { ok: false, reason: 'Words must be at least 2 letters.' }
+  if (main.length < 2)
+    return {
+      ok: false,
+      code: 'TOO_SHORT',
+      reason: 'Words must be at least 2 letters.',
+      highlightCells: pending.map((p) => ({ row: p.row, col: p.col })),
+    }
 
   // Ensure every pending tile is part of the collected main word.
   const mainKeys = new Set(main.map((t) => `${t.row},${t.col}`))
   for (const p of pending) {
     if (!mainKeys.has(`${p.row},${p.col}`)) {
-      return { ok: false, reason: 'Placed tiles must form a single contiguous word.' }
+      return {
+        ok: false,
+        code: 'NOT_CONTIGUOUS',
+        reason: 'Placed tiles must form a single contiguous word.',
+        highlightCells: pending.map((pp) => ({ row: pp.row, col: pp.col })),
+      }
     }
   }
 
   if (firstMove) {
-    if (!mainKeys.has('7,7')) return { ok: false, reason: 'First word must pass through the center star.' }
+    if (!mainKeys.has('7,7'))
+      return {
+        ok: false,
+        code: 'MUST_COVER_CENTER',
+        reason: 'First word must pass through the center star.',
+        highlightCells: [{ row: 7, col: 7 }, ...pending.map((p) => ({ row: p.row, col: p.col }))],
+      }
   } else {
     // Must connect to existing tiles.
     const connects = pending.some((p) => {
@@ -174,13 +225,22 @@ export function validateAndScoreMove(args: {
     // Also allow extending through existing tiles (word includes a committed tile).
     const includesCommitted = main.some((t) => !t.isPending)
     if (!connects && !includesCommitted) {
-      return { ok: false, reason: 'New word must connect to existing tiles.' }
+      return {
+        ok: false,
+        code: 'MUST_CONNECT',
+        reason: 'New word must connect to existing tiles.',
+        highlightCells: pending.map((p) => ({ row: p.row, col: p.col })),
+      }
     }
   }
 
-  const words: { word: string; score: number }[] = []
+  const words: { word: string; score: number; tiles: { row: number; col: number }[] }[] = []
   const mainScore = scoreWord(main)
-  words.push({ word: mainWord, score: mainScore })
+  words.push({
+    word: mainWord,
+    score: mainScore,
+    tiles: main.map((t) => ({ row: t.row, col: t.col })),
+  })
 
   // Cross words for each newly placed tile.
   const crossDir: Dir = dir === 'H' ? 'V' : 'H'
@@ -188,16 +248,26 @@ export function validateAndScoreMove(args: {
     const cross = collectWord(committedGrid, pendingMap, p.row, p.col, crossDir).tiles
     if (cross.length >= 2) {
       const w = tilesToWord(cross)
-      words.push({ word: w, score: scoreWord(cross) })
+      words.push({
+        word: w,
+        score: scoreWord(cross),
+        tiles: cross.map((t) => ({ row: t.row, col: t.col })),
+      })
     }
   }
 
   // Validate words.
   for (const w of words) {
-    if (!dictionary.has(w.word)) return { ok: false, reason: `Invalid word: ${w.word}` }
+    if (!dictionary.has(w.word))
+      return {
+        ok: false,
+        code: 'INVALID_WORD',
+        reason: `Invalid word: ${w.word}`,
+        highlightCells: w.tiles,
+      }
   }
 
   const turnScore = words.reduce((acc, w) => acc + w.score, 0)
-  return { ok: true, words, turnScore }
+  return { ok: true, words: words.map(({ word, score }) => ({ word, score })), turnScore }
 }
 

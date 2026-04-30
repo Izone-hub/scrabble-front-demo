@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { ChatPanel } from '@/components/game/ChatPanel'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 import { makeEmptyBoard, mockChat } from '@/mock/mockGame'
 import { MOCK_DICTIONARY_SET } from '@/game/mockDictionary'
 import { validateAndScoreMove, type PendingPlacement } from '@/game/rules'
@@ -28,6 +29,10 @@ export function GameRoomPage() {
   const [hoveredCell, setHoveredCell] = React.useState<{ row: number; col: number } | null>(null)
   const [turnMessage, setTurnMessage] = React.useState<string | null>(null)
   const [lastTurnScore, setLastTurnScore] = React.useState<number>(0)
+  const [ruleViolation, setRuleViolation] = React.useState<{
+    message: string
+    highlightCells: { row: number; col: number }[]
+  } | null>(null)
 
   const currentPlayer = players[currentPlayerIndex]
 
@@ -58,6 +63,7 @@ export function GameRoomPage() {
     setPlayers((prev) =>
       prev.map((p, i) => (i === currentPlayerIndex ? { ...p, rack: [...p.rack, placement.tile] } : p)),
     )
+    setRuleViolation(null)
   }
 
   function isOccupied(row: number, col: number) {
@@ -75,11 +81,13 @@ export function GameRoomPage() {
         i === currentPlayerIndex ? { ...p, rack: p.rack.filter((t) => t.id !== dragging.tile.id) } : p,
       ),
     )
+    setRuleViolation(null)
   }
 
   function handleSubmitMove() {
     setTurnMessage(null)
     setLastTurnScore(0)
+    setRuleViolation(null)
 
     const result = validateAndScoreMove({
       committedGrid: grid,
@@ -89,6 +97,10 @@ export function GameRoomPage() {
 
     if (result.ok === false) {
       setTurnMessage(result.reason)
+      setRuleViolation({
+        message: result.reason,
+        highlightCells: result.highlightCells ?? [],
+      })
       return
     }
 
@@ -130,6 +142,7 @@ export function GameRoomPage() {
     setPending([])
     setDragging(null)
     setHoveredCell(null)
+    setRuleViolation(null)
     setCurrentPlayerIndex((i) => (i + 1) % 2)
   }
 
@@ -147,6 +160,7 @@ export function GameRoomPage() {
     setHoveredCell(null)
     setTurnMessage('Passed.')
     setLastTurnScore(0)
+    setRuleViolation(null)
     setCurrentPlayerIndex((i) => (i + 1) % 2)
   }
 
@@ -167,6 +181,7 @@ export function GameRoomPage() {
             grid={grid}
             onCellClick={handleCellClick}
             pending={pending}
+            ruleHighlights={ruleViolation?.highlightCells}
             draggingTileId={dragging?.tile.id ?? null}
             hoveredCell={hoveredCell}
             onCellDragEnter={(cell) => setHoveredCell({ row: cell.row, col: cell.col })}
@@ -220,7 +235,16 @@ export function GameRoomPage() {
                   <div className="text-muted-foreground">Last turn score</div>
                   <div className="font-semibold">{lastTurnScore}</div>
                 </div>
-                {turnMessage ? <div className="mt-2 text-xs text-muted-foreground">{turnMessage}</div> : null}
+                {turnMessage ? (
+                  <div
+                    className={cn(
+                      'mt-2 text-xs',
+                      ruleViolation ? 'text-destructive' : 'text-muted-foreground',
+                    )}
+                  >
+                    {turnMessage}
+                  </div>
+                ) : null}
               </div>
             </CardContent>
           </Card>
