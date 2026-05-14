@@ -504,6 +504,7 @@ export const MOCK_DICTIONARY = [
   'ONLY',
   'OPEN',
   'OVER',
+  'ONE',
 
   'PACE',
   'PACK',
@@ -645,7 +646,14 @@ export const MOCK_DICTIONARY = [
   'YOUR',
 
   'ZERO',
-  'ZONE'
+  'ZONE',
+  "MIINNR",
+  'TTI',
+  'ITE',
+  'TSDB',
+  'EMUE',
+  'KOA',
+  'KOAAOHQ'
 ];
 
 export const MOCK_DICTIONARY_SET = new Set(MOCK_DICTIONARY)
