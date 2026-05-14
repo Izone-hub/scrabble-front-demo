@@ -1,6 +1,7 @@
 import * as React from 'react'
 
 import { Board } from '@/components/game/Board'
+import { TurnFeedbackPanel, type TurnFeedbackPayload } from '@/components/game/TurnFeedbackPanel'
 import { TileRack } from '@/components/game/TileRack'
 import { Button } from '@/components/ui/button'
 import { ChatPanel } from '@/components/game/ChatPanel'
@@ -27,12 +28,21 @@ export function GameRoomPage() {
     from: 'rack'
   } | null>(null)
   const [hoveredCell, setHoveredCell] = React.useState<{ row: number; col: number } | null>(null)
-  const [turnMessage, setTurnMessage] = React.useState<string | null>(null)
   const [lastTurnScore, setLastTurnScore] = React.useState<number>(0)
+  const [feedback, setFeedback] = React.useState<TurnFeedbackPayload | null>(null)
+  const [feedbackKey, setFeedbackKey] = React.useState(0)
+  const [scoringPlayerId, setScoringPlayerId] = React.useState<string | null>(null)
+  const scoreHighlightTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [ruleViolation, setRuleViolation] = React.useState<{
     message: string
     highlightCells: { row: number; col: number }[]
   } | null>(null)
+
+  React.useEffect(() => {
+    return () => {
+      if (scoreHighlightTimer.current) clearTimeout(scoreHighlightTimer.current)
+    }
+  }, [])
 
   const currentPlayer = players[currentPlayerIndex]
 
@@ -64,6 +74,7 @@ export function GameRoomPage() {
       prev.map((p, i) => (i === currentPlayerIndex ? { ...p, rack: [...p.rack, placement.tile] } : p)),
     )
     setRuleViolation(null)
+    setFeedback(null)
   }
 
   function isOccupied(row: number, col: number) {
@@ -82,10 +93,10 @@ export function GameRoomPage() {
       ),
     )
     setRuleViolation(null)
+    setFeedback(null)
   }
 
   function handleSubmitMove() {
-    setTurnMessage(null)
     setLastTurnScore(0)
     setRuleViolation(null)
 
@@ -96,7 +107,8 @@ export function GameRoomPage() {
     })
 
     if (result.ok === false) {
-      setTurnMessage(result.reason)
+      setFeedback({ kind: 'error', message: result.reason })
+      setFeedbackKey((k) => k + 1)
       setRuleViolation({
         message: result.reason,
         highlightCells: result.highlightCells ?? [],
@@ -105,9 +117,20 @@ export function GameRoomPage() {
     }
 
     setLastTurnScore(result.turnScore)
-    setTurnMessage(
-      `Played ${result.words.map((w) => `${w.word} (${w.score})`).join(', ')}. +${result.turnScore} points.`,
-    )
+    setFeedback({
+      kind: 'success',
+      turnScore: result.turnScore,
+      words: result.words,
+    })
+    setFeedbackKey((k) => k + 1)
+
+    const scorerId = players[currentPlayerIndex].id
+    if (scoreHighlightTimer.current) clearTimeout(scoreHighlightTimer.current)
+    setScoringPlayerId(scorerId)
+    scoreHighlightTimer.current = setTimeout(() => {
+      setScoringPlayerId(null)
+      scoreHighlightTimer.current = null
+    }, 1200)
 
     // Commit tiles to the board.
     setGrid((prev) => {
@@ -147,8 +170,9 @@ export function GameRoomPage() {
   }
 
   function handlePassTurn() {
+    const hadPending = pending.length > 0
     // Return pending tiles to current rack before passing.
-    if (pending.length) {
+    if (hadPending) {
       setPlayers((prev) =>
         prev.map((p, i) =>
           i === currentPlayerIndex ? { ...p, rack: [...p.rack, ...pending.map((pp) => pp.tile)] } : p,
@@ -158,10 +182,21 @@ export function GameRoomPage() {
     }
     setDragging(null)
     setHoveredCell(null)
-    setTurnMessage('Passed.')
     setLastTurnScore(0)
     setRuleViolation(null)
+    setFeedback({
+      kind: 'pass',
+      message: hadPending
+        ? 'Tiles returned to your rack. Passing to the next player.'
+        : 'Passing to the next player.',
+    })
+    setFeedbackKey((k) => k + 1)
     setCurrentPlayerIndex((i) => (i + 1) % 2)
+  }
+
+  function dismissErrorFeedback() {
+    setFeedback(null)
+    setRuleViolation(null)
   }
 
   return (
@@ -226,25 +261,28 @@ export function GameRoomPage() {
                 </Button>
               </div>
 
-              <div className="rounded-xl border bg-card p-3 text-sm">
+              <TurnFeedbackPanel
+                payload={feedback}
+                feedbackKey={feedbackKey}
+                onDismissError={dismissErrorFeedback}
+              />
+
+              <div className="rounded-xl border bg-card/80 p-3 text-sm backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Pending tiles</div>
-                  <div className="font-semibold">{pending.length}</div>
+                  <div className="font-semibold tabular-nums">{pending.length}</div>
                 </div>
                 <div className="mt-2 flex items-center justify-between">
                   <div className="text-muted-foreground">Last turn score</div>
-                  <div className="font-semibold">{lastTurnScore}</div>
-                </div>
-                {turnMessage ? (
                   <div
                     className={cn(
-                      'mt-2 text-xs',
-                      ruleViolation ? 'text-destructive' : 'text-muted-foreground',
+                      'font-semibold tabular-nums transition-colors duration-300',
+                      lastTurnScore > 0 && 'text-emerald-600 dark:text-emerald-400',
                     )}
                   >
-                    {turnMessage}
+                    {lastTurnScore}
                   </div>
-                ) : null}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -257,13 +295,24 @@ export function GameRoomPage() {
               {players.map((p, idx) => (
                 <div
                   key={p.id}
-                  className="flex items-center justify-between rounded-xl border bg-card px-3 py-2"
+                  className={cn(
+                    'flex items-center justify-between rounded-xl border bg-card px-3 py-2 transition-shadow duration-300',
+                    scoringPlayerId === p.id &&
+                      'ring-2 ring-primary/60 shadow-[0_0_22px_rgba(139,92,246,0.28)]',
+                  )}
                 >
                   <div className="flex items-center gap-2">
                     <div className="text-sm font-semibold">{p.handle}</div>
                     {idx === currentPlayerIndex ? <Badge>Turn</Badge> : null}
                   </div>
-                  <div className="text-sm font-semibold">{p.score}</div>
+                  <div
+                    className={cn(
+                      'text-sm font-semibold tabular-nums transition-transform duration-300',
+                      scoringPlayerId === p.id && 'scale-110 text-primary',
+                    )}
+                  >
+                    {p.score}
+                  </div>
                 </div>
               ))}
             </CardContent>
